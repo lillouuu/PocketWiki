@@ -1,1 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+articles/
+
+# API keys
 .env
+
+# PlatformIO
+PocketWikiFirmware/.pio/
+PocketWikiFirmware/.vscode/
+PocketWikiFirmware/test/
+PocketWikiFirmware/lib/
+PocketWikiFirmware/include/
+
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

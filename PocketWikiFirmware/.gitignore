@@ -3,3 +3,26 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+# Python
+.venv/
+__pycache__/
+*.pyc
+articles/
+
+# API keys
+.env
+
+# PlatformIO
+PocketWikiFirmware/.pio/
+PocketWikiFirmware/.vscode/
+PocketWikiFirmware/test/
+PocketWikiFirmware/lib/
+PocketWikiFirmware/include/
+
+# PyCharm
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
