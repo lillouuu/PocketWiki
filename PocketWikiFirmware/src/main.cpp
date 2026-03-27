@@ -16,7 +16,15 @@ unsigned long lastTouchTime = 0;
 #define SLEEP_TIMEOUT 120000  // 2 min
 
 // ── Screen state ─────────────────────────────────────────────────
-int currentScreen = 0; // 0=home 1=search 2=results 3=article
+enum Screen { HOME, SEARCH, RESULTS, ARTICLE };
+Screen currentScreen = HOME;
+
+// ── RTC Memory ───────────────────────────────────────────────────
+// used to restore exactly where the user was before the device slept
+RTC_DATA_ATTR int  rtcScreen    = 0;
+RTC_DATA_ATTR int  rtcPage      = 0;
+RTC_DATA_ATTR char rtcTitle[64] = "";
+RTC_DATA_ATTR char rtcQuery[32] = "";
 
 // ── TFT pins ─────────────────────────────────────────────────────
 #define TFT_CS   2
@@ -130,7 +138,7 @@ TS_Point getTouch() {
 //  No results / results
 // ═══════════════════════════════════════════════════════════════
 void showNoResults() {
-    tft.fillRect(0, 90, 320, 120, ILI9341_BLACK);
+    tft.fillRect(0, 88, 320, 127, ILI9341_BLACK);
     tft.setTextColor(MEDIUM_GRAY);
     tft.setTextSize(1);
     tft.setCursor(20, 140);
@@ -138,21 +146,24 @@ void showNoResults() {
 }
 
 void displayResults() {
-    tft.fillRect(0, 90, 320, 120, ILI9341_BLACK);
+    // clear results area only
+    tft.fillRect(0, 88, 320, 127, ILI9341_BLACK);
 
+    // results label
     tft.setTextColor(LIGHT_GRAY);
     tft.setTextSize(1);
-    tft.setCursor(20, 93);
+    tft.setCursor(20, 91);
     tft.print("RESULTS:");
-    tft.fillRect(20, 103, 280, 1, LIGHT_GRAY);
+    tft.fillRect(20, 101, 280, 1, LIGHT_GRAY);
 
     if (resultCount == 0) {
         showNoResults();
         return;
     }
 
+    // draw each result
     for (int i = 0; i < resultCount; i++) {
-        int y = 108 + i * 20;
+        int y = 106 + i * 22;
         tft.drawRoundRect(10, y, 255, 18, 3, MEDIUM_GRAY);
         tft.setTextColor(ILI9341_WHITE);
         tft.setTextSize(1);
@@ -162,10 +173,10 @@ void displayResults() {
 
     // load more button
     if (resultCount == MAX_RESULTS) {
-        tft.drawRoundRect(270, 108, 45, 16 * MAX_RESULTS, 3, LIGHT_GRAY);
+        tft.drawRoundRect(270, 106, 45, 5 * 22, 3, LIGHT_GRAY);
         tft.setTextColor(LIGHT_GRAY);
         tft.setTextSize(1);
-        tft.setCursor(273, 108 + MAX_RESULTS * 8);
+        tft.setCursor(273, 106 + MAX_RESULTS * 11);
         tft.print("more");
     }
 }
@@ -351,7 +362,7 @@ char handleKeyPress(TS_Point p) {
 // ═══════════════════════════════════════════════════════════════
 int getTappedResult(TS_Point p) {
     for (int i = 0; i < resultCount; i++) {
-        int y = 108 + i * 20;
+        int y = 106 + i * 22;
         if (p.x >= 10 && p.x <= 265 &&
             p.y >= y  && p.y <= y + 18) return i;
     }
@@ -427,27 +438,44 @@ void showSearchScreen() {
 
 void showResultsScreen() {
     tft.fillScreen(ILI9341_BLACK);
+    
+    // header
     tft.fillRect(0, 0, 320, 50, OFF_WHITE);
     tft.fillRect(0, 50, 320, 4, ILI9341_WHITE);
+    
+    // back button
     tft.setTextColor(ILI9341_BLACK);
     tft.setTextSize(1);
     tft.setCursor(8, 21);
     tft.println("[ < BACK ]");
+    
+    // title
     tft.setTextSize(2);
     tft.setCursor(85, 16);
     tft.println("RESULTS");
+    
+    // decorative lines
     tft.fillRect(20, 65, 280, 1, LIGHT_GRAY);
     tft.fillRect(20, 68, 280, 1, LIGHT_GRAY);
+    
+    // query text
     tft.setTextColor(MEDIUM_GRAY);
     tft.setTextSize(1);
-    tft.setCursor(20, 78);
+    tft.setCursor(20, 72);
     tft.print("Query: ");
     tft.print(searchInput);
+    
+    // divider under query
+    tft.fillRect(20, 83, 280, 1, LIGHT_GRAY);
+    
+    // footer
     tft.fillRect(0, 215, 320, 1, LIGHT_GRAY);
     tft.fillRect(0, 218, 320, 1, LIGHT_GRAY);
     tft.setTextColor(MEDIUM_GRAY);
     tft.setCursor(105, 226);
     tft.println("made with love <3");
+    
+    // show results
     displayResults();
 }
 
@@ -456,13 +484,110 @@ void showResultsScreen() {
 //  Sleep
 // ═══════════════════════════════════════════════════════════════
 void goToSleep() {
+    // save state to RTC memory before sleeping
+    rtcScreen = (int)currentScreen;
+    rtcPage   = currentPage;
+    currentTitle.toCharArray(rtcTitle, 64);
+    searchInput.toCharArray(rtcQuery, 32);
+ 
     digitalWrite(TFT_LED, LOW);
     tft.fillScreen(ILI9341_BLACK);
     esp_sleep_enable_ext0_wakeup((gpio_num_t)T_IRQ, 0);
     esp_deep_sleep_start();
+
 }
 
-
+// ═══════════════════════════════════════════════════════════════
+//  State handlers
+// ═══════════════════════════════════════════════════════════════
+void handleHome(TS_Point p) {
+    if (p.x >= 40 && p.x <= 280 &&
+        p.y >= 115 && p.y <= 165) {
+        currentScreen = SEARCH;
+        searchInput   = "";
+        resultOffset  = 0;
+        resultCount   = 0;
+        showSearchScreen();
+    }
+}
+ 
+void handleSearch(TS_Point p) {
+    // back button
+    if (p.x >= 0 && p.x <= 80 &&
+        p.y >= 0 && p.y <= 55) {
+        currentScreen = HOME;
+        showHomeScreen();
+        return;
+    }
+    char key = handleKeyPress(p);
+    if (key != 0) {
+        if (key == '\b') {
+            if (searchInput.length() > 0)
+                searchInput = searchInput.substring(0, searchInput.length() - 1);
+            updateInputBox();
+        } else if (key == ' ') {
+            searchInput += ' ';
+            updateInputBox();
+        } else if (key == '\n') {
+            resultOffset = 0;
+            resultCount  = 0;
+            searchArticles(searchInput, 0);
+            currentScreen = RESULTS;
+            showResultsScreen();
+        } else {
+            searchInput += key;
+            updateInputBox();
+        }
+    }
+}
+ 
+void handleResults(TS_Point p) {
+    // back → search
+    if (p.x >= 0 && p.x <= 80 &&
+        p.y >= 0 && p.y <= 54) {
+        currentScreen = SEARCH;
+        searchInput   = "";
+        showSearchScreen();
+        return;
+    }
+    // load more
+    if (p.x >= 270 && p.x <= 315 &&
+        p.y >= 106 && p.y <= 106 + 5 * 22) {
+        resultOffset += MAX_RESULTS;
+        searchArticles(searchInput, resultOffset);
+        return;
+    }
+    // tap result
+    int tapped = getTappedResult(p);
+    if (tapped != -1) {
+        String title = results[tapped];
+        title.replace(".txt", "");
+        loadArticle(title);
+    }
+}
+ 
+void handleArticle(TS_Point p) {
+    // back → results
+    if (p.x >= 0 && p.x <= 60 && p.y >= 220) {
+        currentScreen = RESULTS;
+        showResultsScreen();
+        return;
+    }
+    // prev page
+    if (p.x >= 80 && p.x <= 160 &&
+        p.y >= 220 && currentPage > 0) {
+        currentPage--;
+        displayArticlePage(currentPage);
+    }
+    // next page
+    if (p.x >= 200 && p.x <= 300 &&
+        p.y >= 220 && currentPage < totalPages - 1) {
+        currentPage++;
+        displayArticlePage(currentPage);
+    }
+}
+ 
+ 
 // ═══════════════════════════════════════════════════════════════
 //  Setup
 // ═══════════════════════════════════════════════════════════════
@@ -474,118 +599,51 @@ void setup() {
     tft.begin();
     tft.setRotation(1);
     initSD();
+ 
     esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
     if (wakeup == ESP_SLEEP_WAKEUP_EXT0) {
         Serial.println("woke from sleep!");
+        // NEW: restore state from RTC memory after waking
+        currentScreen = (Screen)rtcScreen;
+        currentPage   = rtcPage;
+        currentTitle  = String(rtcTitle);
+        searchInput   = String(rtcQuery);
+ 
+        if (currentScreen == ARTICLE) {
+            loadArticle(currentTitle);
+        } else if (currentScreen == RESULTS) {
+            searchArticles(searchInput, 0);
+            showResultsScreen();
+        } else {
+            currentScreen = HOME;
+            showHomeScreen();
+        }
+    } else {
+        showHomeScreen();
     }
-    showHomeScreen();
+ 
     lastTouchTime = millis();
 }
-
-
 // ═══════════════════════════════════════════════════════════════
 //  Loop
 // ═══════════════════════════════════════════════════════════════
 void loop() {
     // sleep check
-    if (millis() - lastTouchTime > SLEEP_TIMEOUT) {
+    if (digitalRead(T_IRQ) == HIGH &&
+        millis() - lastTouchTime > SLEEP_TIMEOUT) {
         goToSleep();
     }
-
+ 
     if (!touch.touched()) return;
-
+ 
     TS_Point p = getTouch();
     lastTouchTime = millis();
     delay(50);  // debounce
-
-    // ── screen 0: home ──────────────────────────────────────────
-    if (currentScreen == 0) {
-        if (p.x >= 40 && p.x <= 280 &&
-            p.y >= 115 && p.y <= 165) {
-            currentScreen = 1;
-            searchInput   = "";
-            resultOffset  = 0;
-            resultCount   = 0;
-            showSearchScreen();
-        }
-    }
-
-    // ── screen 1: search + keyboard ─────────────────────────────
-    else if (currentScreen == 1) {
-        // back button
-        if (p.x >= 0 && p.x <= 80 &&
-            p.y >= 0 && p.y <= 55) {
-            currentScreen = 0;
-            showHomeScreen();
-            return;
-        }
-        char key = handleKeyPress(p);
-        if (key != 0) {
-            if (key == '\b') {
-                if (searchInput.length() > 0)
-                    searchInput = searchInput.substring(0, searchInput.length() - 1);
-                updateInputBox();
-            } else if (key == ' ') {
-                searchInput += ' ';
-                updateInputBox();
-            } else if (key == '\n') {
-                resultOffset = 0;
-                resultCount  = 0;
-                searchArticles(searchInput, 0);
-                currentScreen = 2;
-                showResultsScreen();
-            } else {
-                searchInput += key;
-                updateInputBox();
-            }
-        }
-    }
-
-    // ── screen 2: results ───────────────────────────────────────
-    else if (currentScreen == 2) {
-        // back → search
-        if (p.x >= 0 && p.x <= 80 &&
-            p.y >= 0 && p.y <= 54) {
-            currentScreen = 1;
-            searchInput   = "";
-            showSearchScreen();
-            return;
-        }
-        // load more
-        if (p.x >= 270 && p.x <= 315 &&
-            p.y >= 108 && p.y <= 108 + 16 * MAX_RESULTS) {
-            resultOffset += MAX_RESULTS;
-            searchArticles(searchInput, resultOffset);
-            return;
-        }
-        // tap result
-        int tapped = getTappedResult(p);
-        if (tapped != -1) {
-            String title = results[tapped];
-            title.replace(".txt", "");
-            loadArticle(title);
-        }
-    }
-
-    // ── screen 3: article ───────────────────────────────────────
-    else if (currentScreen == 3) {
-        // back → results
-        if (p.x >= 0 && p.x <= 60 && p.y >= 220) {
-            currentScreen = 2;
-            showResultsScreen();
-            return;
-        }
-        // prev page
-        if (p.x >= 80 && p.x <= 160 &&
-            p.y >= 220 && currentPage > 0) {
-            currentPage--;
-            displayArticlePage(currentPage);
-        }
-        // next page
-        if (p.x >= 200 && p.x <= 300 &&
-            p.y >= 220 && currentPage < totalPages - 1) {
-            currentPage++;
-            displayArticlePage(currentPage);
-        }
+ 
+    switch (currentScreen) {
+        case HOME:    handleHome(p);    break;
+        case SEARCH:  handleSearch(p);  break;
+        case RESULTS: handleResults(p); break;
+        case ARTICLE: handleArticle(p); break;
     }
 }
