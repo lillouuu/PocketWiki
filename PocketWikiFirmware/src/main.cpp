@@ -235,21 +235,45 @@ void displayArticlePage(int page) {
     String pageText = readFilePage(path, page * CHARS_PER_PAGE, CHARS_PER_PAGE);
 
     // display with word wrapping
+    String word = "";
     int x = 5, y = 28;
     tft.setTextColor(ILI9341_WHITE);
     tft.setTextSize(1);
     for (int i = 0; i < (int)pageText.length(); i++) {
-        char c = pageText[i];
-        if (c == '\n' || x > 314) {
+        // get current char — add space at end to flush last word
+        char c = (i < (int)pageText.length()) ? pageText[i] : ' ';
+        if (c == ' ' || c == '\n') {
+        if (word.length() > 0) {
+            // calculate how wide this word is in pixels
+            // each character at textSize 1 = 6px wide
+            int wordWidth = word.length() * 6;
+
+            // does the word fit on current line?
+            if (x + wordWidth > 314) {
+                // no — move to next line
+                x  = 5;
+                y += 10;
+                if (y > 210) break;  // stop before footer
+            }
+
+            // draw the word
+            tft.setCursor(x, y);
+            tft.print(word);
+            x += wordWidth + 4;  // 4px space between words
+            word = "";
+        }
+
+        // handle newline
+        if (c == '\n') {
             x  = 5;
             y += 10;
             if (y > 210) break;
         }
-        if (c != '\n') {
-            tft.setCursor(x, y);
-            tft.print(c);
-            x += 6;
-        }
+
+    } else {
+        // build the word character by character
+        word += c;
+    }
     }
 
     // footer
